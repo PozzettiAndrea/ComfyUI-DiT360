@@ -7,11 +7,29 @@ auto-downloading an fp8 build) and applies the DiT360 LoRA on top.
 Everything is ComfyUI-native — no diffusers / transformers / peft.
 """
 
+import torch
 import folder_paths
 import comfy.sd
 import comfy.utils
 
 from .download import ensure_file
+
+# Runtime weight-dtype casts, mirroring ComfyUI's UNETLoader. Applied on load
+# regardless of the file's on-disk precision, so e.g. a bf16 FLUX can be run at
+# fp8 to save VRAM.
+QUANTIZATIONS = ["default", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2"]
+
+
+def _quant_model_options(quantization):
+    opts = {}
+    if quantization == "fp8_e4m3fn":
+        opts["dtype"] = torch.float8_e4m3fn
+    elif quantization == "fp8_e4m3fn_fast":
+        opts["dtype"] = torch.float8_e4m3fn
+        opts["fp8_optimizations"] = True
+    elif quantization == "fp8_e5m2":
+        opts["dtype"] = torch.float8_e5m2
+    return opts
 
 # Defaults. The base FLUX repo/filename are overridable text inputs because the
 # canonical fp8 build's exact location varies; testers who already have FLUX can
@@ -37,6 +55,9 @@ class DiT360ModelLoader:
                                "choose download to fetch the fp8 build."}),
                 "dit360_lora": ([DOWNLOAD_SENTINEL] + loras, {
                     "tooltip": "DiT360 LoRA. Download fetches it from the official HF repo."}),
+                "quantization": (QUANTIZATIONS, {
+                    "tooltip": "Runtime weight cast. 'default' keeps the file's precision; "
+                               "fp8 options lower VRAM (works on any base file)."}),
                 "lora_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01}),
             },
             "optional": {
@@ -53,7 +74,7 @@ class DiT360ModelLoader:
     CATEGORY = "DiT360"
     TITLE = "(down)Load DiT360 model(s)"
 
-    def load(self, base_checkpoint, dit360_lora, lora_strength,
+    def load(self, base_checkpoint, dit360_lora, quantization, lora_strength,
              flux_repo_id=DEFAULT_FLUX_REPO, flux_filename=DEFAULT_FLUX_FILE,
              lora_repo_id=DIT360_LORA_REPO, lora_filename=DIT360_LORA_FILE):
 
@@ -68,6 +89,7 @@ class DiT360ModelLoader:
             output_vae=True,
             output_clip=True,
             embedding_directory=folder_paths.get_folder_paths("embeddings"),
+            model_options=_quant_model_options(quantization),
         )[:3]
         if model is None or clip is None or vae is None:
             raise RuntimeError(
