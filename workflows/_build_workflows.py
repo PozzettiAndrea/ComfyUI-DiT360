@@ -105,7 +105,8 @@ def build_t2p():
     g.dump(os.path.join(HERE, "dit360_t2p.json"))
 
 
-def build_edit():
+def build_edit(node_type, edit_prompt, save_prefix, out_name):
+    """Shared graph for the two editing nodes (DiT360Outpaint / DiT360Inpaint)."""
     g = Graph()
     loader = g.add("DiT360ModelLoader", (40, 200), LOADER_W,
                    outputs=LOADER_OUT, size=(340, 220))
@@ -115,21 +116,20 @@ def build_edit():
                 [("pixels", "IMAGE"), ("vae", "VAE")], [("LATENT", "LATENT")], size=(240, 60))
     src = g.add("CLIPTextEncode", (430, 110), ["This is a panorama image."],
                 [("clip", "CLIP")], [("CONDITIONING", "CONDITIONING")], size=(380, 110))
-    edit = g.add("CLIPTextEncode", (430, 280),
-                 ["This is a panorama image. The image depicts a village next to a snow-capped mountain"],
+    edit = g.add("CLIPTextEncode", (430, 280), [edit_prompt],
                  [("clip", "CLIP")], [("CONDITIONING", "CONDITIONING")], size=(380, 130))
     inv = g.add("DiT360RFInvert", (870, 380), [28, "simple", 0.5, 0, "fixed"],
                 [("model", "MODEL"), ("source_conditioning", "CONDITIONING"),
                  ("latent_image", "LATENT")],
                 [("inversion", "DIT360_INVERSION")], size=(300, 180))
-    op = g.add("DiT360Outpaint", (1230, 200),
+    op = g.add(node_type, (1230, 200),
                [2048, 1024, 0.5, 1.0, 0.0, 0.99],
                [("model", "MODEL"), ("inversion", "DIT360_INVERSION"),
                 ("edit_conditioning", "CONDITIONING"), ("mask", "MASK")],
                [("LATENT", "LATENT")], size=(300, 280))
     dec = g.add("VAEDecode", (1580, 200), [],
                 [("samples", "LATENT"), ("vae", "VAE")], [("IMAGE", "IMAGE")], size=(220, 60))
-    save = g.add("SaveImage", (1840, 200), ["DiT360_edit"],
+    save = g.add("SaveImage", (1840, 200), [save_prefix],
                  [("images", "IMAGE")], size=(360, 320))
 
     g.link(loader, 1, src, 0)
@@ -146,9 +146,14 @@ def build_edit():
     g.link(op, 0, dec, 0)
     g.link(loader, 2, dec, 1)
     g.link(dec, 0, save, 0)
-    g.dump(os.path.join(HERE, "dit360_edit.json"))
+    g.dump(os.path.join(HERE, out_name))
 
 
 if __name__ == "__main__":
     build_t2p()
-    build_edit()
+    build_edit("DiT360Outpaint",
+               "This is a panorama image. The image depicts a village next to a snow-capped mountain",
+               "DiT360_outpaint", "dit360_outpaint.json")
+    build_edit("DiT360Inpaint",
+               "This is a panorama image. A serene lake reflecting the surrounding scenery",
+               "DiT360_inpaint", "dit360_inpaint.json")

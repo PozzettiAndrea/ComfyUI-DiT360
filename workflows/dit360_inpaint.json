@@ -215,7 +215,7 @@
         "Node name for S&R": "CLIPTextEncode"
       },
       "widgets_values": [
-        "This is a panorama image. The image depicts a village next to a snow-capped mountain"
+        "This is a panorama image. A serene lake reflecting the surrounding scenery"
       ]
     },
     {
@@ -272,7 +272,7 @@
     },
     {
       "id": 7,
-      "type": "DiT360Outpaint",
+      "type": "DiT360Inpaint",
       "pos": [
         1230,
         200
@@ -317,7 +317,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "DiT360Outpaint"
+        "Node name for S&R": "DiT360Inpaint"
       },
       "widgets_values": [
         2048,
@@ -395,7 +395,7 @@
         "Node name for S&R": "SaveImage"
       },
       "widgets_values": [
-        "DiT360_edit"
+        "DiT360_inpaint"
       ]
     }
   ],

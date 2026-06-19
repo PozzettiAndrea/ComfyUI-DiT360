@@ -49,9 +49,11 @@ loadable UI graphs, modelled on the official
 workflow but using the DiT360 nodes):
 
 - **`workflows/dit360_t2p.json`** — text → seamless panorama.
-- **`workflows/dit360_edit.json`** — load image → RF invert → inpaint/outpaint.
+- **`workflows/dit360_outpaint.json`** — load image → RF invert → outpaint.
+- **`workflows/dit360_inpaint.json`** — load image → RF invert → inpaint (regenerate the masked hole).
 
-(`*_api.json` are the same graphs in API/prompt format for scripting.)
+The bundled example panorama (`assets/chalet_panorama.png`) is copied into
+ComfyUI's `input/` on startup, so the editing graphs load it out of the box.
 
 ### Text-to-panorama graph
 
