@@ -57,7 +57,7 @@
         "Comfy-Org/flux1-dev",
         "flux1-dev-fp8.safetensors",
         "Insta360-Research/DiT360-Panorama-Image-Generation",
-        "pytorch_lora_weights.safetensors"
+        "adapter_model.safetensors"
       ]
     },
     {

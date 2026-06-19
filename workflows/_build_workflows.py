@@ -62,7 +62,7 @@ class Graph:
 LOADER_W = [
     "⤓ download fp8", "⤓ download fp8", "fp8_e4m3fn", 1.0,
     "Comfy-Org/flux1-dev", "flux1-dev-fp8.safetensors",
-    "Insta360-Research/DiT360-Panorama-Image-Generation", "pytorch_lora_weights.safetensors",
+    "Insta360-Research/DiT360-Panorama-Image-Generation", "adapter_model.safetensors",
 ]
 LOADER_OUT = [("model", "MODEL"), ("clip", "CLIP"), ("vae", "VAE")]
 
@@ -72,7 +72,7 @@ def build_t2p():
     loader = g.add("DiT360ModelLoader", (40, 200), LOADER_W,
                    outputs=LOADER_OUT, size=(340, 220))
     pos = g.add("CLIPTextEncode", (430, 110),
-                ["This is a panorama. A medieval castle stands proudly on a hilltop "
+                ["This is a panorama image. A medieval castle stands proudly on a hilltop "
                  "surrounded by autumn forests, with golden light spilling across the landscape."],
                 [("clip", "CLIP")], [("CONDITIONING", "CONDITIONING")], size=(380, 160))
     neg = g.add("CLIPTextEncode", (430, 330), [""],

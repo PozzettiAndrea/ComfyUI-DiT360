@@ -37,7 +37,7 @@ def _quant_model_options(quantization):
 DEFAULT_FLUX_REPO = "Comfy-Org/flux1-dev"
 DEFAULT_FLUX_FILE = "flux1-dev-fp8.safetensors"
 DIT360_LORA_REPO = "Insta360-Research/DiT360-Panorama-Image-Generation"
-DIT360_LORA_FILE = "pytorch_lora_weights.safetensors"
+DIT360_LORA_FILE = "adapter_model.safetensors"
 DOWNLOAD_SENTINEL = "⤓ download fp8"
 
 
@@ -103,6 +103,20 @@ class DiT360ModelLoader:
             lora_path = folder_paths.get_full_path_or_raise("loras", dit360_lora)
 
         lora_sd = comfy.utils.load_torch_file(lora_path, safe_load=True)
+        # Report how many LoRA keys actually map onto the model, so a silent
+        # no-op (wrong format / wrong base) is visible instead of mysterious.
+        try:
+            import comfy.lora
+            key_map = comfy.lora.model_lora_keys_unet(model.model, {})
+            key_map = comfy.lora.model_lora_keys_clip(clip.cond_stage_model, key_map)
+            loaded = comfy.lora.load_lora(lora_sd, key_map)
+            print(f"[DiT360] LoRA: {len(loaded)}/{len(lora_sd)} tensors mapped to the model.")
+            if len(loaded) == 0:
+                print("[DiT360] WARNING: no LoRA keys matched — panoramas will look "
+                      "like plain FLUX. Check the base model is FLUX.1-dev.")
+        except Exception as e:
+            print(f"[DiT360] LoRA key-map check skipped: {e}")
+
         model, clip = comfy.sd.load_lora_for_models(
             model, clip, lora_sd, lora_strength, 0.0)
 

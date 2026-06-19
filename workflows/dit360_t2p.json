@@ -55,7 +55,7 @@
         "Comfy-Org/flux1-dev",
         "flux1-dev-fp8.safetensors",
         "Insta360-Research/DiT360-Panorama-Image-Generation",
-        "pytorch_lora_weights.safetensors"
+        "adapter_model.safetensors"
       ]
     },
     {
@@ -93,7 +93,7 @@
         "Node name for S&R": "CLIPTextEncode"
       },
       "widgets_values": [
-        "This is a panorama. A medieval castle stands proudly on a hilltop surrounded by autumn forests, with golden light spilling across the landscape."
+        "This is a panorama image. A medieval castle stands proudly on a hilltop surrounded by autumn forests, with golden light spilling across the landscape."
       ]
     },
     {
