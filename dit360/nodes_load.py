@@ -11,6 +11,7 @@ import torch
 import folder_paths
 import comfy.sd
 import comfy.utils
+import comfy.lora
 
 from .download import ensure_file
 
@@ -106,7 +107,6 @@ class DiT360ModelLoader:
         # Report how many LoRA keys actually map onto the model, so a silent
         # no-op (wrong format / wrong base) is visible instead of mysterious.
         try:
-            import comfy.lora
             key_map = comfy.lora.model_lora_keys_unet(model.model, {})
             key_map = comfy.lora.model_lora_keys_clip(clip.cond_stage_model, key_map)
             loaded = comfy.lora.load_lora(lora_sd, key_map)

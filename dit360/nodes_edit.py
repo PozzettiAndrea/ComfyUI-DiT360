@@ -14,6 +14,7 @@ Pipeline:
 """
 
 import torch
+import comfy.samplers
 
 from .padding import circular_pad_width, crop_width, make_wrap_ids_patch
 from .masks import mask_to_token_mask
@@ -60,7 +61,6 @@ def rf_invert(model, source_cond, clean_latent, steps, scheduler, gamma, seed):
 class DiT360RFInvert:
     @classmethod
     def INPUT_TYPES(cls):
-        import comfy.samplers
         return {
             "required": {
                 "model": ("MODEL",),
