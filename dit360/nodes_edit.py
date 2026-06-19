@@ -96,7 +96,11 @@ class DiT360RFInvert:
                 "latent_image": ("LATENT", {"tooltip": "VAE-encoded source panorama."}),
                 "steps": ("INT", {"default": 28, "min": 1, "max": 1000}),
                 "scheduler": (comfy.samplers.KSampler.SCHEDULERS,),
-                "gamma": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05}),
+                "gamma": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05,
+                    "tooltip": "Controller strength during inversion (faithfulness vs editability). "
+                               "Higher = cleaner/more standard noise -> easier to edit boldly but "
+                               "less faithful to the source. Lower = stays truer to the original -> "
+                               "better reconstruction but harder to make big changes."}),
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
             }
         }
