@@ -1,0 +1,16 @@
+[project]
+name = "comfyui-dit360"
+description = "Seamless 360° panoramic image generation (DiT360) — fully ComfyUI-native, no extra Python dependencies."
+version = "0.1.0"
+license = { file = "LICENSE" }
+# No runtime dependencies: nodes use only torch, numpy and ComfyUI's own modules.
+# (huggingface_hub, used by the download node, already ships with ComfyUI.)
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/PozzettiAndrea/ComfyUI-DiT360"
+
+[tool.comfy]
+PublisherId = "PozzettiAndrea"
+DisplayName = "ComfyUI-DiT360"
+Icon = ""
