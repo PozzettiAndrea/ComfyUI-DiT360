@@ -109,7 +109,7 @@ def build_edit():
     g = Graph()
     loader = g.add("DiT360ModelLoader", (40, 200), LOADER_W,
                    outputs=LOADER_OUT, size=(340, 220))
-    img = g.add("LoadImage", (40, 500), ["panorama.png", "image"],
+    img = g.add("LoadImage", (40, 500), ["chalet_panorama.png", "image"],
                 outputs=[("IMAGE", "IMAGE"), ("MASK", "MASK")], size=(300, 360))
     enc = g.add("VAEEncode", (430, 540), [],
                 [("pixels", "IMAGE"), ("vae", "VAE")], [("LATENT", "LATENT")], size=(240, 60))

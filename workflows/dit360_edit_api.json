@@ -1,26 +1,121 @@
 {
   "1": {
     "class_type": "DiT360ModelLoader",
-    "inputs": { "base_checkpoint": "⤓ download fp8", "dit360_lora": "⤓ download fp8", "quantization": "fp8_e4m3fn", "lora_strength": 1.0 }
+    "inputs": {
+      "base_checkpoint": "\u2913 download fp8",
+      "dit360_lora": "\u2913 download fp8",
+      "quantization": "fp8_e4m3fn",
+      "lora_strength": 1.0
+    }
   },
-  "2": { "class_type": "LoadImage", "inputs": { "image": "panorama.png" } },
-  "3": { "class_type": "VAEEncode", "inputs": { "pixels": ["2", 0], "vae": ["1", 2] } },
-  "4": { "class_type": "CLIPTextEncode", "inputs": { "clip": ["1", 1], "text": "This is a panorama image." } },
-  "5": { "class_type": "CLIPTextEncode", "inputs": { "clip": ["1", 1],
-         "text": "This is a panorama image. The image depicts a village next to a snow-capped mountain" } },
+  "2": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "chalet_panorama.png"
+    }
+  },
+  "3": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "2",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "1",
+        1
+      ],
+      "text": "This is a panorama image."
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "1",
+        1
+      ],
+      "text": "This is a panorama image. The image depicts a village next to a snow-capped mountain"
+    }
+  },
   "6": {
     "class_type": "DiT360RFInvert",
-    "inputs": { "model": ["1", 0], "source_conditioning": ["4", 0], "latent_image": ["3", 0],
-                "steps": 28, "scheduler": "simple", "gamma": 0.5, "seed": 0 }
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ],
+      "source_conditioning": [
+        "4",
+        0
+      ],
+      "latent_image": [
+        "3",
+        0
+      ],
+      "steps": 28,
+      "scheduler": "simple",
+      "gamma": 0.5,
+      "seed": 0
+    }
   },
   "7": {
     "class_type": "DiT360Outpaint",
     "inputs": {
-      "model": ["1", 0], "inversion": ["6", 0], "edit_conditioning": ["5", 0],
-      "mask": ["2", 1], "image_width": 2048, "image_height": 1024,
-      "tau": 0.5, "eta": 1.0, "start_step": 0.0, "stop_step": 0.99
+      "model": [
+        "1",
+        0
+      ],
+      "inversion": [
+        "6",
+        0
+      ],
+      "edit_conditioning": [
+        "5",
+        0
+      ],
+      "mask": [
+        "2",
+        1
+      ],
+      "image_width": 2048,
+      "image_height": 1024,
+      "tau": 0.5,
+      "eta": 1.0,
+      "start_step": 0.0,
+      "stop_step": 0.99
     }
   },
-  "8": { "class_type": "VAEDecode", "inputs": { "samples": ["7", 0], "vae": ["1", 2] } },
-  "9": { "class_type": "SaveImage", "inputs": { "images": ["8", 0], "filename_prefix": "DiT360_edit" } }
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "7",
+        0
+      ],
+      "vae": [
+        "1",
+        2
+      ]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": [
+        "8",
+        0
+      ],
+      "filename_prefix": "DiT360_edit"
+    }
+  }
 }
