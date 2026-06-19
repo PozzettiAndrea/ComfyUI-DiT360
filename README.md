@@ -43,7 +43,17 @@ Because it's native, you inherit ComfyUI's fp8 / GGUF / offload for free — you
 
 ## Quick start
 
-`workflows/dit360_t2p_api.json` is an **API-format** prompt. Node wiring:
+Drag a workflow from `workflows/` onto the ComfyUI canvas (these are full,
+loadable UI graphs, modelled on the official
+[FLUX.1 text-to-image](https://docs.comfy.org/tutorials/flux/flux-1-text-to-image)
+workflow but using the DiT360 nodes):
+
+- **`workflows/dit360_t2p.json`** — text → seamless panorama.
+- **`workflows/dit360_edit.json`** — load image → RF invert → inpaint/outpaint.
+
+(`*_api.json` are the same graphs in API/prompt format for scripting.)
+
+### Text-to-panorama graph
 
 ```
 (down)Load DiT360 model(s) ─ model ─────────────► DiT360 Panorama Sampler ─► VAEDecode ─► SaveImage
@@ -53,8 +63,17 @@ Because it's native, you inherit ComfyUI's fp8 / GGUF / offload for free — you
 EmptySD3LatentImage (2048 x 1024) ──────────────► latent_image
 ```
 
+The loader replaces the FLUX "Load Checkpoint" node and applies the DiT360 LoRA;
+its **quantization** dropdown is the equivalent of `UNETLoader`'s `weight_dtype`
+(`default` / `fp8_e4m3fn` / `fp8_e4m3fn_fast` / `fp8_e5m2`).
+
 Defaults from the paper: **2048×1024**, **28 steps**, **guidance 2.8**, sampler
 CFG **1.0** (FLUX.1-dev). Prefix prompts with "This is a panorama." as upstream does.
+
+> Prefer the separated loaders? Swap the DiT360 loader for the standard
+> `UNETLoader` + `DualCLIPLoader` (type `flux`) + `VAELoader`, add
+> `LoraLoaderModelOnly` for the DiT360 LoRA, and feed the resulting `MODEL` into
+> the DiT360 Panorama Sampler — everything downstream is identical.
 
 > ⚠️ The model was trained only at 1024×2048; other sizes degrade.
 
