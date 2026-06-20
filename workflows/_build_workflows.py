@@ -60,9 +60,7 @@ class Graph:
 
 
 LOADER_W = [
-    "⤓ download fp8", "⤓ download fp8", "fp8_e4m3fn", 1.0,
-    "Comfy-Org/flux1-dev", "flux1-dev-fp8.safetensors",
-    "Insta360-Research/DiT360-Panorama-Image-Generation", "adapter_model.safetensors",
+    "\u2913 download fp8 (all-in-one, ~17GB)", "\u2913 download", "fp8_e4m3fn", 1.0,
 ]
 LOADER_OUT = [("model", "MODEL"), ("clip", "CLIP"), ("vae", "VAE")]
 

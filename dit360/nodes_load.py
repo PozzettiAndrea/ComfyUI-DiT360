@@ -32,14 +32,21 @@ def _quant_model_options(quantization):
         opts["dtype"] = torch.float8_e5m2
     return opts
 
-# Defaults. The base FLUX repo/filename are overridable text inputs because the
-# canonical fp8 build's exact location varies; testers who already have FLUX can
-# just pick their existing checkpoint from the dropdown instead of downloading.
+# Download sources (all non-gated).
 DEFAULT_FLUX_REPO = "Comfy-Org/flux1-dev"
-DEFAULT_FLUX_FILE = "flux1-dev-fp8.safetensors"
+DEFAULT_FLUX_FILE = "flux1-dev-fp8.safetensors"   # all-in-one fp8 (~17GB)
+BF16_UNET_FILE = "flux1-dev.safetensors"          # bf16 diffusion model only (~24GB)
+TE_REPO = "comfyanonymous/flux_text_encoders"
+T5_FILE = "t5xxl_fp16.safetensors"
+CLIPL_FILE = "clip_l.safetensors"
+VAE_REPO = "Kijai/flux-fp8"
+VAE_FILE = "flux-vae-bf16.safetensors"
 DIT360_LORA_REPO = "Insta360-Research/DiT360-Panorama-Image-Generation"
 DIT360_LORA_FILE = "adapter_model.safetensors"
-DOWNLOAD_SENTINEL = "⤓ download fp8"
+
+DL_FP8 = "⤓ download fp8 (all-in-one, ~17GB)"
+DL_BF16 = "⤓ download bf16 (full, ~34GB)"
+DL_LORA = "⤓ download"
 
 
 class DiT360ModelLoader:
@@ -51,21 +58,16 @@ class DiT360ModelLoader:
         loras = folder_paths.get_filename_list("loras")
         return {
             "required": {
-                "base_checkpoint": ([DOWNLOAD_SENTINEL] + ckpts, {
-                    "tooltip": "FLUX.1-dev checkpoint. Pick an existing file, or "
-                               "choose download to fetch the fp8 build."}),
-                "dit360_lora": ([DOWNLOAD_SENTINEL] + loras, {
+                "base_checkpoint": ([DL_FP8, DL_BF16] + ckpts, {
+                    "tooltip": "FLUX.1-dev base. Pick an existing all-in-one checkpoint, or "
+                               "download: fp8 (smaller/faster, slightly softer) or bf16 (full "
+                               "precision = closest to the original DiT360, needs offload on 24GB)."}),
+                "dit360_lora": ([DL_LORA] + loras, {
                     "tooltip": "DiT360 LoRA. Download fetches it from the official HF repo."}),
                 "quantization": (QUANTIZATIONS, {
                     "tooltip": "Runtime weight cast. 'default' keeps the file's precision; "
                                "fp8 options lower VRAM (works on any base file)."}),
                 "lora_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01}),
-            },
-            "optional": {
-                "flux_repo_id": ("STRING", {"default": DEFAULT_FLUX_REPO}),
-                "flux_filename": ("STRING", {"default": DEFAULT_FLUX_FILE}),
-                "lora_repo_id": ("STRING", {"default": DIT360_LORA_REPO}),
-                "lora_filename": ("STRING", {"default": DIT360_LORA_FILE}),
             },
         }
 
@@ -75,31 +77,42 @@ class DiT360ModelLoader:
     CATEGORY = "DiT360"
     TITLE = "(down)Load DiT360 model(s)"
 
-    def load(self, base_checkpoint, dit360_lora, quantization, lora_strength,
-             flux_repo_id=DEFAULT_FLUX_REPO, flux_filename=DEFAULT_FLUX_FILE,
-             lora_repo_id=DIT360_LORA_REPO, lora_filename=DIT360_LORA_FILE):
-
-        # --- resolve / fetch base checkpoint ---
-        if base_checkpoint == DOWNLOAD_SENTINEL:
-            ckpt_path = ensure_file("checkpoints", flux_filename, flux_repo_id)
-        else:
-            ckpt_path = folder_paths.get_full_path_or_raise("checkpoints", base_checkpoint)
-
-        model, clip, vae = comfy.sd.load_checkpoint_guess_config(
-            ckpt_path,
-            output_vae=True,
-            output_clip=True,
+    def _load_bf16_full(self, quantization):
+        """bf16 diffusion model + separate fp16 text encoders + VAE (the bf16 file
+        is not an all-in-one checkpoint)."""
+        unet = ensure_file("diffusion_models", BF16_UNET_FILE, DEFAULT_FLUX_REPO)
+        t5 = ensure_file("text_encoders", T5_FILE, TE_REPO)
+        clip_l = ensure_file("text_encoders", CLIPL_FILE, TE_REPO)
+        vae_p = ensure_file("vae", VAE_FILE, VAE_REPO)
+        model = comfy.sd.load_diffusion_model(unet, model_options=_quant_model_options(quantization))
+        clip = comfy.sd.load_clip(
+            ckpt_paths=[clip_l, t5],
             embedding_directory=folder_paths.get_folder_paths("embeddings"),
-            model_options=_quant_model_options(quantization),
-        )[:3]
-        if model is None or clip is None or vae is None:
-            raise RuntimeError(
-                "DiT360: base checkpoint did not yield MODEL+CLIP+VAE. Use an "
-                "all-in-one FLUX.1-dev checkpoint, or wire CLIP/VAE separately.")
+            clip_type=comfy.sd.CLIPType.FLUX)
+        vae = comfy.sd.VAE(sd=comfy.utils.load_torch_file(vae_p))
+        return model, clip, vae
+
+    def load(self, base_checkpoint, dit360_lora, quantization, lora_strength):
+        # --- resolve / fetch base model ---
+        if base_checkpoint == DL_BF16:
+            model, clip, vae = self._load_bf16_full(quantization)
+        else:
+            if base_checkpoint == DL_FP8:
+                ckpt_path = ensure_file("checkpoints", DEFAULT_FLUX_FILE, DEFAULT_FLUX_REPO)
+            else:
+                ckpt_path = folder_paths.get_full_path_or_raise("checkpoints", base_checkpoint)
+            model, clip, vae = comfy.sd.load_checkpoint_guess_config(
+                ckpt_path, output_vae=True, output_clip=True,
+                embedding_directory=folder_paths.get_folder_paths("embeddings"),
+                model_options=_quant_model_options(quantization))[:3]
+            if model is None or clip is None or vae is None:
+                raise RuntimeError(
+                    "DiT360: base checkpoint did not yield MODEL+CLIP+VAE. Use an "
+                    "all-in-one FLUX.1-dev checkpoint, or the bf16 download option.")
 
         # --- resolve / fetch LoRA ---
-        if dit360_lora == DOWNLOAD_SENTINEL:
-            lora_path = ensure_file("loras", lora_filename, lora_repo_id)
+        if dit360_lora == DL_LORA:
+            lora_path = ensure_file("loras", DIT360_LORA_FILE, DIT360_LORA_REPO)
         else:
             lora_path = folder_paths.get_full_path_or_raise("loras", dit360_lora)
 
