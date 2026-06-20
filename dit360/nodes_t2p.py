@@ -11,9 +11,41 @@ use for FLUX.1-dev (the paper uses 28 steps, guidance 2.8).
 import comfy.sample
 import comfy.samplers
 import comfy.utils
+import comfy.model_sampling
 import latent_preview
 
 from .padding import circular_pad_width, crop_width, make_wrap_ids_patch
+
+# FLUX dynamic-shift constants (diffusers calculate_shift / ComfyUI ModelSamplingFlux):
+# mu is linear in the packed-token count between (256 tokens -> 0.5) and (4096 -> 1.15).
+_BASE_TOKENS, _MAX_TOKENS = 256, 4096
+_BASE_SHIFT, _MAX_SHIFT = 0.5, 1.15
+
+
+def _flux_resolution_shift(width, height, pad_columns):
+    """mu for the *padded* panorama, matching the original diffusers pipeline.
+
+    The original computes calculate_shift on the padded packed-token count
+    (n_h * (n_w + 2)). ComfyUI's default FLUX shift is a fixed 1.15 (mu), which
+    is ~half the correct value at 2048x1024 -> a different denoising trajectory.
+    One padded token column = 16 px wide, so the effective width is widened.
+    """
+    eff_w = width + pad_columns * 2 * 16
+    tokens = (eff_w * height) / (16 * 16)  # packed FLUX token count
+    mm = (_MAX_SHIFT - _BASE_SHIFT) / (_MAX_TOKENS - _BASE_TOKENS)
+    return tokens * mm + (_BASE_SHIFT - mm * _BASE_TOKENS)
+
+
+def _patch_flux_shift(m, shift):
+    base = comfy.model_sampling.ModelSamplingFlux
+    const = comfy.model_sampling.CONST
+
+    class _MS(base, const):
+        pass
+
+    ms = _MS(m.model.model_config)
+    ms.set_parameters(shift=shift)
+    m.add_object_patch("model_sampling", ms)
 
 
 class DiT360PanoramaSampler:
@@ -40,6 +72,11 @@ class DiT360PanoramaSampler:
                                "opposite edge (faithful to DiT360 training)."}),
                 "pad_columns": ("INT", {"default": 1, "min": 1, "max": 8,
                     "tooltip": "Token columns of circular padding per side (1 = 16 px)."}),
+                "flux_resolution_shift": ("BOOLEAN", {"default": True,
+                    "tooltip": "Set FLUX's dynamic timestep shift from the (padded) panorama "
+                               "resolution, matching the original DiT360 schedule. ComfyUI's "
+                               "default (shift=1.15) is ~half the correct value at 2048x1024 "
+                               "and gives a different composition. Turn off for ComfyUI default."}),
             },
         }
 
@@ -49,15 +86,23 @@ class DiT360PanoramaSampler:
     TITLE = "DiT360 Panorama Sampler"
 
     def sample(self, model, positive, negative, latent_image, seed, steps, cfg,
-               sampler_name, scheduler, denoise, wrap_position_ids=True, pad_columns=1):
+               sampler_name, scheduler, denoise, wrap_position_ids=True, pad_columns=1,
+               flux_resolution_shift=True):
         latent = latent_image["samples"]
         latent = comfy.sample.fix_empty_latent_channels(model, latent)
+        h, w = latent.shape[-2] * 8, latent.shape[-1] * 8  # latent px -> image px
 
-        # Patch the model: faithful wrap position-ids on the padded boundary.
-        m = model
+        m = model.clone()
+        # Faithful wrap position-ids on the padded boundary.
         if wrap_position_ids:
-            m = model.clone()
             m.set_model_post_input_patch(make_wrap_ids_patch(pad_columns))
+        # FLUX dynamic timestep shift from the padded resolution (matches the
+        # original diffusers schedule; ComfyUI's default 1.15 is ~half).
+        if flux_resolution_shift:
+            shift = _flux_resolution_shift(w, h, pad_columns)
+            _patch_flux_shift(m, shift)
+            print(f"[DiT360] FLUX resolution shift mu={shift:.3f} "
+                  f"(ComfyUI default 1.15) for {w}x{h} +{pad_columns}col")
 
         # Wrap-pad latent + matching noise so the padded columns are copies of the
         # opposite edge (persistent across the whole denoise, then cropped).

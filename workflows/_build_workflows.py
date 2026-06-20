@@ -83,7 +83,7 @@ def build_t2p():
     lat = g.add("EmptySD3LatentImage", (430, 500), [2048, 1024, 1],
                 outputs=[("LATENT", "LATENT")], size=(280, 110))
     smp = g.add("DiT360PanoramaSampler", (1130, 200),
-                [0, "fixed", 28, 1.0, "euler", "simple", 1.0, True, 1],
+                [0, "fixed", 28, 1.0, "euler", "simple", 1.0, True, 1, True],
                 [("model", "MODEL"), ("positive", "CONDITIONING"),
                  ("negative", "CONDITIONING"), ("latent_image", "LATENT")],
                 [("LATENT", "LATENT")], size=(300, 320))
@@ -122,7 +122,7 @@ def build_pid():
     lat = g.add("EmptySD3LatentImage", (430, 440), [2048, 1024, 1],
                 outputs=[("LATENT", "LATENT")], size=(280, 110))
     smp = g.add("DiT360PanoramaSampler", (1130, 160),
-                [0, "fixed", 28, 1.0, "euler", "simple", 1.0, True, 1],
+                [0, "fixed", 28, 1.0, "euler", "simple", 1.0, True, 1, True],
                 [("model", "MODEL"), ("positive", "CONDITIONING"),
                  ("negative", "CONDITIONING"), ("latent_image", "LATENT")],
                 [("LATENT", "LATENT")], size=(300, 320))
