@@ -8,6 +8,7 @@ Use with a 2048x1024 (W x H) empty latent and the FLUX guidance you'd normally
 use for FLUX.1-dev (the paper uses 28 steps, guidance 2.8).
 """
 
+import torch
 import comfy.sample
 import comfy.samplers
 import comfy.utils
