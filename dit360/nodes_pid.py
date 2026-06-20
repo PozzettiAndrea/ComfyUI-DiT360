@@ -184,10 +184,20 @@ class DiT360PiDDecode:
                 blk.mlp_chunks = int(mlp_chunks)
             _log(f"PiD Decode: pixel-block mlp_chunks={mlp_chunks} for {out_h}x{out_w}")
 
+        # Make room via the native, tracking-aware path: free_memory offloads the
+        # other resident models (FLUX, text encoders) to CPU until PiD's estimated
+        # need is free on-device. This is the manager's own "vacation" mechanism --
+        # load_models_gpu's keep-logic doesn't evict here because each model
+        # individually fits in free VRAM, so the activations OOM. The models stay in
+        # RAM and reload on demand; nothing is hard-unloaded.
+        dev = comfy.model_management.get_torch_device()
+        need = pid_model.model.memory_required([b * 2, 3, out_h, out_w])
+        comfy.model_management.free_memory(need, dev)
+
         # pixel-space canvas (ChromaRadiance: 3-ch, spatial = output pixels)
         canvas = torch.zeros((b, 3, out_h, out_w), dtype=torch.float32)
         noise = comfy.sample.prepare_noise(canvas, seed)
-        _log(f"PiD Decode: sampling on {comfy.model_management.get_torch_device()} ...")
+        _log(f"PiD Decode: freed VRAM for PiD; sampling on {dev} ...")
 
         callback = latent_preview.prepare_callback(pid_model, steps)
         out = comfy.sample.sample(
