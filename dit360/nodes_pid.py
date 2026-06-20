@@ -95,6 +95,37 @@ def _log(msg):
     print(f"[DiT360] {msg}", flush=True)
 
 
+def _vram_report(tag, device):
+    """Dump the real VRAM picture: physical, torch, aimdo buffers, tracked models."""
+    mm = comfy.model_management
+    try:
+        free, total = torch.cuda.mem_get_info(device)
+        ta = torch.cuda.memory_allocated(device)
+        tr = torch.cuda.memory_reserved(device)
+        GB = 1024 ** 3
+        _log(f"VRAM[{tag}] physical free={free/GB:.2f}G / total={total/GB:.2f}G | "
+             f"torch alloc={ta/GB:.2f}G reserved={tr/GB:.2f}G")
+        # aimdo cast-buffer reservation + live buffers
+        rsv = getattr(mm, "DEFAULT_AIMDO_CAST_BUFFER_RESERVATION_SIZE", None)
+        if rsv is not None:
+            _log(f"VRAM[{tag}] aimdo cast-buffer reservation={rsv/GB:.2f}G; "
+                 f"largest_casted_weight={getattr(mm,'LARGEST_AIMDO_CASTED_WEIGHT',('',0))[1]/1024/1024:.1f}MB")
+        bufs = getattr(mm, "STREAM_AIMDO_CAST_BUFFERS", {})
+        for k, vb in list(bufs.items()):
+            _log(f"VRAM[{tag}] aimdo cast buf: max={getattr(vb,'max_size',0)/GB:.2f}G alloc={vb.size()/GB:.2f}G")
+        # every tracked loaded model
+        for lm in getattr(mm, "current_loaded_models", []):
+            name = type(getattr(lm.model, "model", lm.model)).__name__
+            mem = lm.model_memory() / GB if hasattr(lm, "model_memory") else 0
+            loaded = lm.model_loaded_memory() / GB if hasattr(lm, "model_loaded_memory") else 0
+            off = lm.model_offloaded_memory() / GB if hasattr(lm, "model_offloaded_memory") else 0
+            dyn = lm.model.is_dynamic() if hasattr(lm.model, "is_dynamic") else "?"
+            _log(f"VRAM[{tag}]  model {name}: total={mem:.2f}G on-gpu={loaded:.2f}G "
+                 f"offloaded={off:.2f}G dynamic={dyn}")
+    except Exception as e:
+        _log(f"VRAM[{tag}] report failed: {e}")
+
+
 def _encode(clip, text):
     tokens = clip.tokenize(text)
     return clip.encode_from_tokens_scheduled(tokens)
@@ -191,21 +222,29 @@ class DiT360PiDDecode:
         # individually fits in free VRAM, so the activations OOM. The models stay in
         # RAM and reload on demand; nothing is hard-unloaded.
         dev = comfy.model_management.get_torch_device()
+        _vram_report("before free", dev)
         need = pid_model.model.memory_required([b * 2, 3, out_h, out_w])
+        _log(f"PiD memory_required estimate: {need/1024**3:.2f}G")
         comfy.model_management.free_memory(need, dev)
+        _vram_report("after free", dev)
 
         # pixel-space canvas (ChromaRadiance: 3-ch, spatial = output pixels). bf16,
         # not fp32: at 8K the canvas+noise alone are ~810MB in fp32 -- halving them
         # is real headroom when the DynamicVRAM buffer is at its limit.
         canvas = torch.zeros((b, 3, out_h, out_w), dtype=torch.bfloat16)
         noise = comfy.sample.prepare_noise(canvas, seed)
-        _log(f"PiD Decode: freed VRAM for PiD; sampling on {dev} ...")
+        _vram_report("after canvas", dev)
+        _log(f"PiD Decode: sampling on {dev} ...")
 
         callback = latent_preview.prepare_callback(pid_model, steps)
-        out = comfy.sample.sample(
-            pid_model, noise, steps, cfg, sampler_name, scheduler,
-            positive, negative, canvas, denoise=1.0, disable_noise=False,
-            callback=callback, disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED, seed=seed)
+        try:
+            out = comfy.sample.sample(
+                pid_model, noise, steps, cfg, sampler_name, scheduler,
+                positive, negative, canvas, denoise=1.0, disable_noise=False,
+                callback=callback, disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED, seed=seed)
+        except Exception:
+            _vram_report("at OOM", dev)
+            raise
 
         # crop the wrap-padding back off (in output pixels)
         if pad_columns > 0:
