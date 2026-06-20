@@ -194,8 +194,10 @@ class DiT360PiDDecode:
         need = pid_model.model.memory_required([b * 2, 3, out_h, out_w])
         comfy.model_management.free_memory(need, dev)
 
-        # pixel-space canvas (ChromaRadiance: 3-ch, spatial = output pixels)
-        canvas = torch.zeros((b, 3, out_h, out_w), dtype=torch.float32)
+        # pixel-space canvas (ChromaRadiance: 3-ch, spatial = output pixels). bf16,
+        # not fp32: at 8K the canvas+noise alone are ~810MB in fp32 -- halving them
+        # is real headroom when the DynamicVRAM buffer is at its limit.
+        canvas = torch.zeros((b, 3, out_h, out_w), dtype=torch.bfloat16)
         noise = comfy.sample.prepare_noise(canvas, seed)
         _log(f"PiD Decode: freed VRAM for PiD; sampling on {dev} ...")
 
