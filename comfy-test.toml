@@ -12,11 +12,13 @@ cpu = [
     "!dit360_t2p",
     "!dit360_outpaint",
     "!dit360_inpaint",
+    "!dit360_t2p_pid_8k",
 ]
 gpu = [
     "dit360_t2p",
     "!dit360_outpaint",
     "!dit360_inpaint",
+    "!dit360_t2p_pid_8k",
 ]
 
 [test.platforms]

@@ -105,6 +105,51 @@ def build_t2p():
     g.dump(os.path.join(HERE, "dit360_t2p.json"))
 
 
+CASTLE = ("This is a panorama image. A medieval castle stands proudly on a hilltop "
+          "surrounded by autumn forests, with golden light spilling across the landscape.")
+
+
+def build_pid():
+    """Text -> seamless panorama -> PiD seam-safe 4x decode (8K)."""
+    g = Graph()
+    loader = g.add("DiT360ModelLoader", (40, 160), LOADER_W, outputs=LOADER_OUT, size=(340, 220))
+    pos = g.add("CLIPTextEncode", (430, 80), [CASTLE],
+                [("clip", "CLIP")], [("CONDITIONING", "CONDITIONING")], size=(380, 150))
+    neg = g.add("CLIPTextEncode", (430, 300), [""],
+                [("clip", "CLIP")], [("CONDITIONING", "CONDITIONING")], size=(380, 100))
+    guid = g.add("FluxGuidance", (850, 80), [2.8],
+                 [("conditioning", "CONDITIONING")], [("CONDITIONING", "CONDITIONING")], size=(240, 60))
+    lat = g.add("EmptySD3LatentImage", (430, 440), [2048, 1024, 1],
+                outputs=[("LATENT", "LATENT")], size=(280, 110))
+    smp = g.add("DiT360PanoramaSampler", (1130, 160),
+                [0, "fixed", 28, 1.0, "euler", "simple", 1.0, True, 1],
+                [("model", "MODEL"), ("positive", "CONDITIONING"),
+                 ("negative", "CONDITIONING"), ("latent_image", "LATENT")],
+                [("LATENT", "LATENT")], size=(300, 320))
+    pidload = g.add("DiT360PiDLoader", (1130, 540),
+                    ["flux1_1024_to_4096 (4x -> 8K pano)", "bf16", "bf16"],
+                    outputs=[("pid_model", "MODEL"), ("pid_clip", "CLIP")], size=(330, 130))
+    piddec = g.add("DiT360PiDDecode", (1500, 200),
+                   [CASTLE, 4, 4, 1.0, 0.0, 0, "fixed", "euler", "simple", 1],
+                   [("pid_model", "MODEL"), ("pid_clip", "CLIP"), ("latent", "LATENT")],
+                   [("IMAGE", "IMAGE")], size=(360, 320))
+    save = g.add("SaveImage", (1900, 200), ["DiT360_pano_8k"],
+                 [("images", "IMAGE")], size=(360, 320))
+
+    g.link(loader, 1, pos, 0)
+    g.link(loader, 1, neg, 0)
+    g.link(pos, 0, guid, 0)
+    g.link(loader, 0, smp, 0)
+    g.link(guid, 0, smp, 1)
+    g.link(neg, 0, smp, 2)
+    g.link(lat, 0, smp, 3)
+    g.link(pidload, 0, piddec, 0)
+    g.link(pidload, 1, piddec, 1)
+    g.link(smp, 0, piddec, 2)
+    g.link(piddec, 0, save, 0)
+    g.dump(os.path.join(HERE, "dit360_t2p_pid_8k.json"))
+
+
 def build_edit(node_type, edit_prompt, save_prefix, out_name):
     """Shared graph for the two editing nodes (DiT360Outpaint / DiT360Inpaint)."""
     g = Graph()
@@ -151,6 +196,7 @@ def build_edit(node_type, edit_prompt, save_prefix, out_name):
 
 if __name__ == "__main__":
     build_t2p()
+    build_pid()
     build_edit("DiT360Outpaint",
                "This is a panorama image. The image depicts a village next to a snow-capped mountain",
                "DiT360_outpaint", "dit360_outpaint.json")

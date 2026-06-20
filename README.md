@@ -49,6 +49,7 @@ loadable UI graphs, modelled on the official
 workflow but using the DiT360 nodes):
 
 - **`workflows/dit360_t2p.json`** — text → seamless panorama.
+- **`workflows/dit360_t2p_pid_8k.json`** — text → panorama → **PiD seam-safe 4× decode** (8K, see below).
 - **`workflows/dit360_outpaint.json`** — load image → RF invert → outpaint.
 - **`workflows/dit360_inpaint.json`** — load image → RF invert → inpaint (regenerate the masked hole).
 
@@ -79,12 +80,34 @@ CFG **1.0** (FLUX.1-dev). Prefix prompts with "This is a panorama." as upstream 
 
 > ⚠️ The model was trained only at 1024×2048; other sizes degrade.
 
+## High-res output: PiD (NVIDIA Pixel Diffusion)
+
+PiD replaces the VAE decode with a pixel-diffusion model that **decodes and 4×
+upscales in one pass**. It builds on ComfyUI core's native PiD support, so there
+are **no extra dependencies** — two nodes:
+
+- **(down)Load PiD decoder** — fetches the PiD model + Gemma2-2B text encoder from
+  `Comfy-Org/PixelDiT` and loads them natively → `MODEL`, `CLIP`.
+- **DiT360 PiD Decode (seam-safe)** — wraps core's PiD sampling but circular-pads
+  the longitude axis so the 0°/360° seam survives the high-res decode, then crops.
+  Replaces `VAEDecode`: feed it the panorama latent + caption.
+
+```
+DiT360 Panorama Sampler ─ latent ─────────────► DiT360 PiD Decode ─► SaveImage
+(down)Load PiD decoder ─ pid_model / pid_clip ─┘
+```
+
+> ⚠️ 4× of a 1024×2048 panorama is **4096×8192** — heavy on VRAM. Lower `upscale`
+> or expect to need a big GPU. EXPERIMENTAL: pixel-space schedule/cfg may need tuning.
+
 ## Status
 
 - ✅ Load node + seamless text-to-panorama sampler — implemented; **pending
   on-GPU validation** (needs FLUX weights).
 - 🚧 Inpaint / outpaint — native port of RF-inversion + the per-attention-layer
   masked feature-sharing processor. See `IMPLEMENTATION_NOTES.md`.
+- 🚧 PiD seam-safe decode — wraps core PiD; **pending on-GPU validation** (pixel
+  schedule + 8K VRAM).
 
 ## License
 
