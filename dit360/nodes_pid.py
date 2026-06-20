@@ -219,6 +219,15 @@ class DiT360PiDDecode:
         sigma_t = torch.tensor([float(degrade_sigma)], dtype=torch.float32)
         disable_pbar = not comfy.utils.PROGRESS_BAR_ENABLED
 
+        # PiD is distilled for a SPECIFIC 4-step sigma schedule. The stock schedulers
+        # only approximate it -- "simple" gives [1,.931,.818,.599,0], so the last step
+        # jumps from 0.599->0 and the image is left UNDER-denoised = grainy. Feed the
+        # exact distilled sigmas (per the model's own sampling_settings comment).
+        pid_sigmas = None
+        if steps == 4:
+            pid_sigmas = torch.tensor([0.999, 0.866, 0.634, 0.342, 0.0])
+            _log("PiD Decode: using exact distilled 4-step sigmas [.999,.866,.634,.342,0]")
+
         def _decode(lq, ow):
             p = node_helpers.conditioning_set_values(
                 positive, {"lq_latent": lq, "degrade_sigma": sigma_t})
@@ -226,7 +235,7 @@ class DiT360PiDDecode:
             noise = comfy.sample.prepare_noise(canvas, seed)
             s = comfy.sample.sample(pid_model, noise, steps, cfg, sampler_name, scheduler,
                                     p, negative, canvas, denoise=1.0, seed=seed,
-                                    disable_pbar=disable_pbar)
+                                    sigmas=pid_sigmas, disable_pbar=disable_pbar)
             return (s.float() * 0.5 + 0.5).clamp(0.0, 1.0)  # [b,3,out_h,ow] in 0..1
 
         if tile_strips <= 1:
