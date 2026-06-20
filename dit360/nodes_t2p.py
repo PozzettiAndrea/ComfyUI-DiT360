@@ -48,6 +48,21 @@ def _patch_flux_shift(m, shift):
     m.add_object_patch("model_sampling", ms)
 
 
+def diffusers_flux_sigmas(steps, width, height, pad_columns):
+    """The EXACT sigma schedule diffusers' FlowMatchEulerDiscreteScheduler uses for
+    FLUX: sigmas = linspace(1, 1/N, N), then the dynamic flux shift with mu from
+    the (padded) resolution, then a trailing 0. ComfyUI's `flux_time_shift` is the
+    same formula, and ModelSamplingFlux.timestep(sigma)=sigma, so feeding these
+    sigmas to the sampler reproduces the diffusers trajectory step-for-step.
+    """
+    import math
+    mu = _flux_resolution_shift(width, height, pad_columns)  # == diffusers calculate_shift
+    t = torch.linspace(1.0, 1.0 / steps, steps, dtype=torch.float32)
+    em = math.exp(mu)
+    sig = em / (em + (1.0 / t - 1.0))            # time_shift(mu, 1.0, t)
+    return torch.cat([sig, sig.new_zeros(1)])    # trailing sigma=0
+
+
 class DiT360PanoramaSampler:
     @classmethod
     def INPUT_TYPES(cls):
@@ -77,6 +92,10 @@ class DiT360PanoramaSampler:
                                "resolution, matching the original DiT360 schedule. ComfyUI's "
                                "default (shift=1.15) is ~half the correct value at 2048x1024 "
                                "and gives a different composition. Turn off for ComfyUI default."}),
+                "match_diffusers_sigmas": ("BOOLEAN", {"default": True,
+                    "tooltip": "Use the EXACT diffusers sigma schedule (linspace(1,1/N,N) + flux "
+                               "shift) the original DiT360 runs, overriding the 'scheduler' "
+                               "dropdown. The most faithful setting."}),
             },
         }
 
@@ -87,7 +106,7 @@ class DiT360PanoramaSampler:
 
     def sample(self, model, positive, negative, latent_image, seed, steps, cfg,
                sampler_name, scheduler, denoise, wrap_position_ids=True, pad_columns=1,
-               flux_resolution_shift=True):
+               flux_resolution_shift=True, match_diffusers_sigmas=True):
         latent = latent_image["samples"]
         latent = comfy.sample.fix_empty_latent_channels(model, latent)
         h, w = latent.shape[-2] * 8, latent.shape[-1] * 8  # latent px -> image px
@@ -96,13 +115,18 @@ class DiT360PanoramaSampler:
         # Faithful wrap position-ids on the padded boundary.
         if wrap_position_ids:
             m.set_model_post_input_patch(make_wrap_ids_patch(pad_columns))
-        # FLUX dynamic timestep shift from the padded resolution (matches the
-        # original diffusers schedule; ComfyUI's default 1.15 is ~half).
-        if flux_resolution_shift:
+
+        # Exact diffusers sigma schedule (overrides scheduler + encodes the shift).
+        sigmas = None
+        if match_diffusers_sigmas:
+            sigmas = diffusers_flux_sigmas(steps, w, h, pad_columns).to(latent.device)
+            print(f"[DiT360] exact diffusers sigmas: {sigmas[0]:.3f}..{sigmas[-2]:.3f} ({steps} steps)")
+        elif flux_resolution_shift:
+            # FLUX dynamic timestep shift from the padded resolution (ComfyUI's
+            # default 1.15 is ~half the correct value at 2048x1024).
             shift = _flux_resolution_shift(w, h, pad_columns)
             _patch_flux_shift(m, shift)
-            print(f"[DiT360] FLUX resolution shift mu={shift:.3f} "
-                  f"(ComfyUI default 1.15) for {w}x{h} +{pad_columns}col")
+            print(f"[DiT360] FLUX resolution shift mu={shift:.3f} for {w}x{h} +{pad_columns}col")
 
         # Wrap-pad latent + matching noise so the padded columns are copies of the
         # opposite edge (persistent across the whole denoise, then cropped).
@@ -119,8 +143,8 @@ class DiT360PanoramaSampler:
 
         samples = comfy.sample.sample(
             m, noise_p, steps, cfg, sampler_name, scheduler, positive, negative,
-            latent_p, denoise=denoise, noise_mask=noise_mask, callback=callback,
-            disable_pbar=disable_pbar, seed=seed,
+            latent_p, denoise=denoise, noise_mask=noise_mask, sigmas=sigmas,
+            callback=callback, disable_pbar=disable_pbar, seed=seed,
         )
 
         samples = crop_width(samples, pad_columns)
