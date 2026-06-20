@@ -9,6 +9,19 @@ overwritten.
 import os
 import shutil
 
+# Let torch hand unused VRAM back to the driver so comfy-aimdo's separate (raw
+# cudaMalloc) cast buffer can get physical pages. Without this, torch's caching
+# allocator reserves ~all VRAM during big pixel-space (PiD 8K) decodes -- using
+# only a fraction -- and aimdo OOMs on a 37MB buffer. Best-effort: only works if
+# CUDA isn't initialized yet (it usually isn't at prestartup). The reliable place
+# is the launch env. We append, never clobber an existing setting.
+_alloc = os.environ.get("PYTORCH_CUDA_ALLOC_CONF", "")
+if "expandable_segments" not in _alloc:
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = (
+        (_alloc + "," if _alloc else "") + "expandable_segments:True")
+    print(f"[DiT360] PYTORCH_CUDA_ALLOC_CONF={os.environ['PYTORCH_CUDA_ALLOC_CONF']} "
+          "(lets torch release VRAM to aimdo for big PiD decodes)")
+
 _IMG_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 
 
