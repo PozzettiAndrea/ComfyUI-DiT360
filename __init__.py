@@ -30,4 +30,12 @@ try:
 except Exception as e:  # pragma: no cover
     print(f"[DiT360] editing nodes not loaded yet: {e}")
 
+# PiD decoder loader (builds on ComfyUI core's native PiD support).
+try:
+    from .dit360.nodes_pid import PID_NODE_CLASS_MAPPINGS, PID_NODE_DISPLAY_NAME_MAPPINGS
+    NODE_CLASS_MAPPINGS.update(PID_NODE_CLASS_MAPPINGS)
+    NODE_DISPLAY_NAME_MAPPINGS.update(PID_NODE_DISPLAY_NAME_MAPPINGS)
+except Exception as e:  # pragma: no cover
+    print(f"[DiT360] PiD loader not loaded: {e}")
+
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
