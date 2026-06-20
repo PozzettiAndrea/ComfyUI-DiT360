@@ -167,8 +167,14 @@ class DiT360PiDDecode:
                 "mlp_chunks": ("INT", {"default": 0, "min": 0, "max": 64,
                     "tooltip": "PiD's own VRAM dial: split each pixel-block MLP into N chunks "
                                "(lower peak VRAM, marginally slower). 0 = auto-scale with output "
-                               "resolution. Raise if you still OOM at 8K. Eviction of other models "
-                               "is handled by ComfyUI's model manager automatically."}),
+                               "resolution."}),
+                "tile_strips": ("INT", {"default": 0, "min": 0, "max": 32,
+                    "tooltip": "Decode in N circular width strips to fit VRAM (8K needs it on "
+                               "24GB). 0 = auto (~2048px/strip). 1 = single canvas (needs a big "
+                               "GPU). More strips = less VRAM, more time."}),
+                "tile_overlap": ("INT", {"default": 8, "min": 0, "max": 32,
+                    "tooltip": "Strip overlap in latent columns (1 col = upscale*16 px). "
+                               "Feathered-blended; also keeps the 0/360 seam continuous."}),
             },
         }
 
@@ -179,79 +185,86 @@ class DiT360PiDDecode:
 
     @torch.no_grad()
     def decode(self, pid_model, pid_clip, latent, caption, upscale, steps, cfg,
-               degrade_sigma, seed, sampler_name, scheduler, pad_columns=1, mlp_chunks=0):
+               degrade_sigma, seed, sampler_name, scheduler, pad_columns=1, mlp_chunks=0,
+               tile_strips=0, tile_overlap=8):
         t0 = time.time()
         samples = latent["samples"]
         b, _, h, w = samples.shape
+        lq_full = comfy.latent_formats.Flux().process_in(samples)
+        px = LATENT_DOWN * upscale            # output px per lq column (=32 at 4x)
+        out_h, out_w = h * px, w * px
 
-        # lq latent, matching PiDConditioning (Flux format process_in), then wrap-pad
-        # the longitude axis by `pad_columns` latent pixels (explicit, so the crop
-        # in output pixels is exactly pad_columns * LATENT_DOWN * upscale per side).
-        lq = comfy.latent_formats.Flux().process_in(samples)
-        if pad_columns > 0:
-            lq = torch.cat([lq[..., -pad_columns:], lq, lq[..., :pad_columns]], dim=-1)
-        wp = lq.shape[-1]
-        out_h = h * LATENT_DOWN * upscale
-        out_w = wp * LATENT_DOWN * upscale
-        _log(f"PiD Decode: latent {tuple(samples.shape)} -> lq(padded) {tuple(lq.shape)}; "
-             f"canvas {b}x3x{out_h}x{out_w} ({upscale}x); steps={steps} cfg={cfg}")
+        # The full 8K pixel-space forward needs ~16-20GB of activations (measured)
+        # and OOMs a 24GB card. Decode in circular, overlapping width strips instead:
+        # at ~2048px/strip the peak is ~8GB. The panorama wraps, so strips wrap too,
+        # and the feathered blend across the 0/360 boundary keeps the seam continuous.
+        if tile_strips <= 0:
+            tile_strips = max(1, -(-out_w // 2048))   # ~2048px per strip
 
-        # caption conditioning + attach lq_latent / degrade_sigma (== PiDConditioning)
-        positive = _encode(pid_clip, caption)
-        negative = _encode(pid_clip, "")
-        sigma_t = torch.tensor([float(degrade_sigma)], dtype=torch.float32)
-        positive = node_helpers.conditioning_set_values(
-            positive, {"lq_latent": lq, "degrade_sigma": sigma_t})
-
-        # PiD's own VRAM dial: split the pixel-block MLP (the "huge peak") into more
-        # chunks for big canvases. Auto-scales with output area; the model default (2)
-        # is fine for ~2K but 8K needs more. Eviction of FLUX/TE is left to ComfyUI's
-        # model manager (load_models_gpu computes memory_required and offloads as needed).
-        if mlp_chunks <= 0:
-            mlp_chunks = max(2, -(-(out_h * out_w) // 3_000_000))  # ~3 MP per chunk
+        # mlp_chunks sized for the per-strip canvas (the model's own MLP-peak dial).
+        strip_area = out_h * (out_w // max(1, tile_strips))
+        chunks = mlp_chunks if mlp_chunks > 0 else max(2, -(-strip_area // 3_000_000))
         blocks = getattr(pid_model.model.diffusion_model, "pixel_blocks", None)
         if blocks is not None:
             for blk in blocks:
-                blk.mlp_chunks = int(mlp_chunks)
-            _log(f"PiD Decode: pixel-block mlp_chunks={mlp_chunks} for {out_h}x{out_w}")
+                blk.mlp_chunks = int(chunks)
 
-        # Make room via the native, tracking-aware path: free_memory offloads the
-        # other resident models (FLUX, text encoders) to CPU until PiD's estimated
-        # need is free on-device. This is the manager's own "vacation" mechanism --
-        # load_models_gpu's keep-logic doesn't evict here because each model
-        # individually fits in free VRAM, so the activations OOM. The models stay in
-        # RAM and reload on demand; nothing is hard-unloaded.
+        # Free FLUX/TE from VRAM (native, tracking-aware offload to CPU).
         dev = comfy.model_management.get_torch_device()
-        _vram_report("before free", dev)
-        need = pid_model.model.memory_required([b * 2, 3, out_h, out_w])
-        _log(f"PiD memory_required estimate: {need/1024**3:.2f}G")
-        comfy.model_management.free_memory(need, dev)
-        _vram_report("after free", dev)
+        comfy.model_management.free_memory(
+            pid_model.model.memory_required([b * 2, 3, out_h, out_w // max(1, tile_strips)]), dev)
 
-        # pixel-space canvas (ChromaRadiance: 3-ch, spatial = output pixels). bf16,
-        # not fp32: at 8K the canvas+noise alone are ~810MB in fp32 -- halving them
-        # is real headroom when the DynamicVRAM buffer is at its limit.
-        canvas = torch.zeros((b, 3, out_h, out_w), dtype=torch.bfloat16)
-        noise = comfy.sample.prepare_noise(canvas, seed)
-        _vram_report("after canvas", dev)
-        _log(f"PiD Decode: sampling on {dev} ...")
+        positive = _encode(pid_clip, caption)
+        negative = _encode(pid_clip, "")
+        sigma_t = torch.tensor([float(degrade_sigma)], dtype=torch.float32)
+        disable_pbar = not comfy.utils.PROGRESS_BAR_ENABLED
 
-        callback = latent_preview.prepare_callback(pid_model, steps)
-        try:
-            out = comfy.sample.sample(
-                pid_model, noise, steps, cfg, sampler_name, scheduler,
-                positive, negative, canvas, denoise=1.0, disable_noise=False,
-                callback=callback, disable_pbar=not comfy.utils.PROGRESS_BAR_ENABLED, seed=seed)
-        except Exception:
-            _vram_report("at OOM", dev)
-            raise
+        def _decode(lq, ow):
+            p = node_helpers.conditioning_set_values(
+                positive, {"lq_latent": lq, "degrade_sigma": sigma_t})
+            canvas = torch.zeros((b, 3, out_h, ow), dtype=torch.bfloat16)
+            noise = comfy.sample.prepare_noise(canvas, seed)
+            s = comfy.sample.sample(pid_model, noise, steps, cfg, sampler_name, scheduler,
+                                    p, negative, canvas, denoise=1.0, seed=seed,
+                                    disable_pbar=disable_pbar)
+            return (s.float() * 0.5 + 0.5).clamp(0.0, 1.0)  # [b,3,out_h,ow] in 0..1
 
-        # crop the wrap-padding back off (in output pixels)
-        if pad_columns > 0:
-            crop_px = pad_columns * LATENT_DOWN * upscale
-            out = out[..., crop_px:-crop_px]
-        # pixel latent (-1..1, BCHW) -> IMAGE (0..1, BHWC)
-        image = (out.float() * 0.5 + 0.5).clamp(0.0, 1.0).movedim(1, -1)
+        if tile_strips <= 1:
+            # single full canvas (small outputs): keep the explicit circular pad.
+            lq = lq_full
+            if pad_columns > 0:
+                lq = torch.cat([lq[..., -pad_columns:], lq, lq[..., :pad_columns]], dim=-1)
+            _log(f"PiD Decode: single canvas {out_h}x{lq.shape[-1]*px} (chunks={chunks})")
+            img = _decode(lq, lq.shape[-1] * px)
+            if pad_columns > 0:
+                cp = pad_columns * px
+                img = img[..., cp:-cp]
+            image = img.movedim(1, -1)
+        else:
+            ov = int(tile_overlap)
+            _log(f"PiD Decode: {tile_strips} circular strips, overlap {ov} cols, "
+                 f"chunks={chunks}, out {out_h}x{out_w}")
+            acc = torch.zeros((b, 3, out_h, out_w), dtype=torch.float32)   # CPU
+            wsum = torch.zeros((1, 1, 1, out_w), dtype=torch.float32)
+            for i in range(tile_strips):
+                c0 = (i * w) // tile_strips - ov
+                c1 = ((i + 1) * w) // tile_strips + ov
+                sw = c1 - c0
+                idx = torch.arange(c0, c1) % w
+                strip = _decode(lq_full[..., idx], sw * px).cpu()  # [b,3,out_h,sw*px]
+                # feather: linear ramp across the overlap on each side
+                spx, ovpx = sw * px, ov * px
+                f = torch.ones(spx)
+                if ovpx > 0:
+                    r = torch.linspace(0.0, 1.0, ovpx + 2)[1:-1]
+                    f[:ovpx], f[-ovpx:] = r, r.flip(0)
+                oidx = torch.arange(c0 * px, c1 * px) % out_w
+                acc.index_add_(3, oidx, strip * f.view(1, 1, 1, -1))
+                wsum.index_add_(3, oidx, f.view(1, 1, 1, -1).expand(1, 1, 1, spx).contiguous())
+                comfy.model_management.soft_empty_cache()
+                _log(f"  strip {i+1}/{tile_strips} done ({time.time()-t0:.0f}s)")
+            image = (acc / wsum.clamp_min(1e-6)).movedim(1, -1)
+
         _log(f"PiD Decode: done -> image {tuple(image.shape)} in {time.time() - t0:.1f}s")
         return (image,)
 
