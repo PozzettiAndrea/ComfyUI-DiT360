@@ -65,18 +65,23 @@ def make_wrap_ids_patch(patch_cols: int = 1):
         col = ids[..., 2]
         n_w = int(col.max().item()) + 1
         seq = ids.shape[1]
-        if n_w <= 2 or seq % n_w != 0:
+        pc = patch_cols
+        if n_w <= 2 * pc or seq % n_w != 0:
             return args
         n_h = seq // n_w
+        n_real = n_w - 2 * pc
 
-        pc = patch_cols
-        if n_w <= 2 * pc:
-            return args
-
+        # Rebuild the width-id channel EXACTLY as the original DiT360 pipeline:
+        # real columns numbered 0..n_real-1, and each pad column duplicates the
+        # opposite real edge's id. This is critical, not cosmetic: ComfyUI's
+        # native grid numbers the padded width 0..n_w-1, which leaves the real
+        # columns at 1..n_w-2 and pushes the duplicated id to n_real (an absolute
+        # position the model never saw at this resolution -> RoPE garbage at the
+        # seam). Keeping real cols at 0..n_real-1 stays in-distribution.
+        real = torch.arange(n_real, device=ids.device, dtype=ids.dtype)
+        width = torch.cat([real[-pc:], real, real[:pc]])  # [n_real-pc.., 0..n_real-1, ..pc-1]
         g = ids.view(ids.shape[0], n_h, n_w, ids.shape[-1]).clone()
-        # left pad columns  <- real right edge ; right pad columns <- real left edge
-        g[:, :, :pc, :] = g[:, :, n_w - 2 * pc:n_w - pc, :]
-        g[:, :, n_w - pc:, :] = g[:, :, pc:2 * pc, :]
+        g[..., 2] = width.view(1, 1, n_w).expand(g.shape[0], n_h, n_w)
         ids = g.view(ids.shape[0], seq, ids.shape[-1])
 
         if squeezed:
