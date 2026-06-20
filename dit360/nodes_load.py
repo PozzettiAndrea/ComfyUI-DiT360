@@ -110,6 +110,15 @@ class DiT360ModelLoader:
                     "DiT360: base checkpoint did not yield MODEL+CLIP+VAE. Use an "
                     "all-in-one FLUX.1-dev checkpoint, or the bf16 download option.")
 
+        # DiT360 was trained with diffusers' FLUX, which pads T5 to 512 tokens.
+        # ComfyUI defaults to 256, which changes the joint-attention conditioning
+        # -> force 512 to match the original (FLUX includes pad tokens in attention).
+        try:
+            clip.tokenizer.t5xxl.min_length = 512
+            print("[DiT360] T5 length set to 512 (matches original DiT360 training).")
+        except Exception as e:
+            print(f"[DiT360] could not set T5 length to 512: {e}")
+
         # --- resolve / fetch LoRA ---
         if dit360_lora == DL_LORA:
             lora_path = ensure_file("loras", DIT360_LORA_FILE, DIT360_LORA_REPO)
