@@ -133,6 +133,11 @@ class DiT360PiDDecode:
             "optional": {
                 "pad_columns": ("INT", {"default": 1, "min": 0, "max": 8,
                     "tooltip": "Circular padding columns for the seam (0 = off)."}),
+                "mlp_chunks": ("INT", {"default": 0, "min": 0, "max": 64,
+                    "tooltip": "PiD's own VRAM dial: split each pixel-block MLP into N chunks "
+                               "(lower peak VRAM, marginally slower). 0 = auto-scale with output "
+                               "resolution. Raise if you still OOM at 8K. Eviction of other models "
+                               "is handled by ComfyUI's model manager automatically."}),
             },
         }
 
@@ -143,7 +148,7 @@ class DiT360PiDDecode:
 
     @torch.no_grad()
     def decode(self, pid_model, pid_clip, latent, caption, upscale, steps, cfg,
-               degrade_sigma, seed, sampler_name, scheduler, pad_columns=1):
+               degrade_sigma, seed, sampler_name, scheduler, pad_columns=1, mlp_chunks=0):
         t0 = time.time()
         samples = latent["samples"]
         b, _, h, w = samples.shape
@@ -166,6 +171,18 @@ class DiT360PiDDecode:
         sigma_t = torch.tensor([float(degrade_sigma)], dtype=torch.float32)
         positive = node_helpers.conditioning_set_values(
             positive, {"lq_latent": lq, "degrade_sigma": sigma_t})
+
+        # PiD's own VRAM dial: split the pixel-block MLP (the "huge peak") into more
+        # chunks for big canvases. Auto-scales with output area; the model default (2)
+        # is fine for ~2K but 8K needs more. Eviction of FLUX/TE is left to ComfyUI's
+        # model manager (load_models_gpu computes memory_required and offloads as needed).
+        if mlp_chunks <= 0:
+            mlp_chunks = max(2, -(-(out_h * out_w) // 3_000_000))  # ~3 MP per chunk
+        blocks = getattr(pid_model.model.diffusion_model, "pixel_blocks", None)
+        if blocks is not None:
+            for blk in blocks:
+                blk.mlp_chunks = int(mlp_chunks)
+            _log(f"PiD Decode: pixel-block mlp_chunks={mlp_chunks} for {out_h}x{out_w}")
 
         # pixel-space canvas (ChromaRadiance: 3-ch, spatial = output pixels)
         canvas = torch.zeros((b, 3, out_h, out_w), dtype=torch.float32)
